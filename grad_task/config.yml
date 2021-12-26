@@ -1,0 +1,37 @@
+spark:
+  appname: grad_task
+  master: local[*]
+
+logging:
+  version: 1
+  formatters:
+    short:
+      format: '%(levelname)s: %(message)s'
+    long:
+      format: '[%(asctime)s] %(levelname)s @line-%(lineno)d: %(message)s'
+  handlers:
+    console:
+      class: logging.StreamHandler
+      formatter: long
+      level: DEBUG
+  root:
+    level: DEBUG
+    handlers: [ console ]
+
+inputs:
+  business: hdfs://127.0.0.1:9000/user/training/pyspark/grad_task/yelp_academic_dataset_business.json
+  checkin: hdfs://127.0.0.1:9000/user/training/pyspark/grad_task/yelp_academic_dataset_checkin.json
+  review: hdfs://127.0.0.1:9000/user/training/pyspark/grad_task/yelp_academic_dataset_review.json
+  tip: hdfs://127.0.0.1:9000/user/training/pyspark/grad_task/yelp_academic_dataset_tip.json
+  user: hdfs://127.0.0.1:9000/user/training/pyspark/grad_task/yelp_academic_dataset_user.json
+
+outputs:
+  checkin: hdfs://127.0.0.1:9000/user/iignatov/grad_task/checkin
+  review_text_elite_reviews: hdfs://127.0.0.1:9000/user/iignatov/grad_task/review_text/elite_reviews
+  review_text_best_businesses: hdfs://127.0.0.1:9000/user/iignatov/grad_task/review_text/best_businesses
+  review_text_worst_businesses: hdfs://127.0.0.1:9000/user/iignatov/grad_task/review_text/worst_businesses
+  review_text_most_useful: hdfs://127.0.0.1:9000/user/iignatov/grad_task/review_text/most_useful
+  review_text_count_reviews: hdfs://127.0.0.1:9000/user/iignatov/grad_task/review_text/count_reviews
+  tip: hdfs://127.0.0.1:9000/user/iignatov/grad_task/tip
+  elite_user: hdfs://127.0.0.1:9000/user/iignatov/grad_task/user/elite_user
+  full_review: hdfs://127.0.0.1:9000/user/iignatov/grad_task/full_review

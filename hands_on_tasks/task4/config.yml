@@ -1,0 +1,21 @@
+appname: task4
+
+logging:
+  version: 1
+  formatters:
+    short:
+      format: '%(levelname)s: %(message)s'
+    long:
+      format: '[%(asctime)s] %(levelname)s @line-%(lineno)d: %(message)s'
+  handlers:
+    console:
+      class: logging.StreamHandler
+      formatter: long
+      level: DEBUG
+  root:
+    level: DEBUG
+    handlers: [console]
+
+inputs:
+  patients: hdfs://127.0.0.1:9000/user/iignatov/data/patients.csv
+  
