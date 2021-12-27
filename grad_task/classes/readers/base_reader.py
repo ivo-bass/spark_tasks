@@ -2,10 +2,9 @@ from abc import ABC, abstractmethod
 
 
 class BaseReader(ABC):
-    def __init__(self, logger, path: str) -> None:
+    def __init__(self, logger) -> None:
         self.logger = logger
-        self.path = path
 
     @abstractmethod
-    def read(self):
+    def read(self, path: str):
         raise NotImplementedError('Reading should be implemented in a subclass')
