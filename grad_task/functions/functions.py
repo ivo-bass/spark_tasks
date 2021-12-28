@@ -1,84 +1,6 @@
 from datetime import datetime
 
 import databricks.koalas as ks
-from classes import KdfBuilder, JsonToSparkReader, JsonToKoalasReader, CsvWriter, ParquetWriter
-
-
-def read_and_build_dataframes(logger, spark, inputs):
-    builder = KdfBuilder()
-    json_to_spark_reader = JsonToSparkReader(logger=logger, spark=spark)
-    business = builder.build(
-        path=inputs.business,
-        reader=json_to_spark_reader,
-        columns=['business_id', 'name', 'address', 'city', 'state', 'postal_code']
-    )
-    user = builder.build(
-        path=inputs.user,
-        reader=json_to_spark_reader,
-        columns=['user_id', 'name', 'yelping_since', 'elite']
-    )
-    review_sdf = JsonToSparkReader(logger=logger, spark=spark).read(path=inputs.review)
-    review = builder.build(
-        sdf=review_sdf,
-        columns=['review_id', 'user_id', 'business_id', 'stars', 'useful']
-    )
-    full_review = builder.build(
-        sdf=review_sdf,
-        columns=['business_id', 'user_id', 'stars', 'useful', 'text', 'date']
-    )
-    tip = builder.build(
-        path=inputs.tip,
-        reader=json_to_spark_reader,
-        columns=['user_id', 'business_id', 'text', 'date']
-    )
-    checkin = JsonToKoalasReader(logger=logger).read(path=inputs.checkin)
-    return business, user, review, full_review, tip, checkin
-
-
-def write_files(last_checkin, elite_reviews, worst10, best10,
-                count_per_business, most_useful_reviews, tip, elite_since, full_review,
-                logger, outputs):
-    csv_writer = CsvWriter(logger=logger)
-    parquet_writer = ParquetWriter(logger=logger)
-    parquet_writer.write(
-        kdf=last_checkin,
-        path=outputs.checkin,
-        partition_cols=last_checkin['last_checkin'].dt.year
-    )
-    csv_writer.write(
-        kdf=elite_reviews,
-        path=outputs.review_text_elite_reviews
-    )
-    csv_writer.write(
-        kdf=worst10,
-        path=outputs.review_text_worst_businesses
-    )
-    csv_writer.write(
-        kdf=best10,
-        path=outputs.review_text_best_businesses
-    )
-    csv_writer.write(
-        kdf=count_per_business,
-        path=outputs.review_text_count_reviews
-    )
-    csv_writer.write(
-        kdf=most_useful_reviews,
-        path=outputs.review_text_most_useful
-    )
-    parquet_writer.write(
-        kdf=tip,
-        path=outputs.tip,
-        partition_cols=tip['date'].dt.year
-    )
-    csv_writer.write(
-        kdf=elite_since,
-        path=outputs.elite_user
-    )
-    parquet_writer.write(
-        kdf=full_review,
-        path=outputs.full_review,
-        partition_cols=full_review['review_date'].dt.year
-    )
 
 
 def clean_dates_and_get_max(date_str):
@@ -86,7 +8,7 @@ def clean_dates_and_get_max(date_str):
     return ks.to_datetime(dates, infer_datetime_format=True).max()
 
 
-def get_last_checkin_date(ser, logger):
+def split_string_and_get_last_date(ser, logger):
     logger.info('Cleaning dates and returning last date')
     return ser \
         .map(clean_dates_and_get_max) \
@@ -100,9 +22,9 @@ def get_name_and_id_for_elite_users(kdf, logger):
     return kdf.loc[elite_filter, ['name', 'user_id']]
 
 
-def get_count_of_reviews_per_user(kdf, logger):
-    logger.info('Getting the reviews count per user')
-    return kdf.groupby('user_id')['review_id'].count().rename("number_of_reviews")
+def group_by__count__rename(kdf, grp_col: str, count_col: str, new_name: str, logger):
+    logger.info(f'Grouping by {grp_col}, counting {count_col} and renaming to {new_name}')
+    return kdf.groupby(grp_col)[count_col].count().rename(new_name)
 
 
 def create_elite_reviews_df_sorted_by_count(left, right, logger):
@@ -144,7 +66,8 @@ def get_best_10_businesses(kdf, logger):
 
 def get_most_useful_reviews(kdf, logger):
     logger.info('Group reviews by user, sum useful reviews and get top 10')
-    useful = kdf.groupby('user_id')['useful'].sum().rename('useful_reviews').reset_index()
+    useful = kdf.groupby('user_id')['useful'].sum().rename(
+        'useful_reviews').reset_index()
     return useful.sort_values('useful_reviews', ascending=False).head(10)
 
 
@@ -164,3 +87,33 @@ def create_elite_since_df(kdf, ser, logger):
     since = ks.DataFrame(kdf['user_id'])
     since['years_since_elite'] = ser.map(lambda x: today - x)
     return since
+
+
+def drop_and_rename_columns(kdf, drop_cols: list, new_idx: str, columns: dict, logger):
+    logger.info(f'Drop {drop_cols}, set {new_idx} as index and rename columns')
+    new_kdf = kdf.drop(drop_cols).set_index(new_idx)
+    return new_kdf.rename(columns=columns)
+
+
+def set_index_and_rename_columns(kdf, new_idx: str, columns: dict, logger):
+    logger.info(f'Set index to {new_idx} and rename columns')
+    return kdf.set_index(new_idx).rename(columns=columns)
+
+
+def concatenate_columns(kdf, logger):
+    logger.info('Concatenating business address')
+    kdf['business_address'] = \
+        kdf.state + ', ' + \
+        kdf.city + ', ' + \
+        kdf.address + ', ' + \
+        kdf.postal_code
+    logger.info('Dropping address parts')
+    return kdf.drop(
+        ['state', 'city', 'address', 'postal_code'])
+
+
+def join_left_with_2_dfs(left, right1, on1, right2, on2, logger):
+    logger.info('Joining 3 dfs')
+    left = left.join(right1, on=on1, how="left")
+    left = left.join(right2, on=on2, how='left')
+    return left
