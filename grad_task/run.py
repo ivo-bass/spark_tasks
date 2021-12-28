@@ -12,98 +12,60 @@ from datetime import datetime
 import databricks.koalas as ks
 
 from classes import ArgsParser, Configurator, SparkManager, Inputs, Outputs, Logger
-from functions import read_and_build_dataframes, write_files
-
-
-configurations = ArgsParser().parse_configurations()
-configurator = Configurator(**configurations)
-spark_manager = SparkManager(configurator.spark)
-inputs = Inputs(**configurator.inputs)
-outputs = Outputs(**configurator.outputs)
-logger = Logger(configurator.logging).logger
-
-
-def clean_dates(date_str):
-    dates = date_str.split(', ')
-    return ks.to_datetime(dates, infer_datetime_format=True).max()
+from functions import read_and_build_dataframes, write_files, get_last_checkin_date, get_name_and_id_for_elite_users, \
+    get_count_of_reviews_per_user, create_elite_reviews_df_sorted_by_count, get_average_stars_and_id_per_business, \
+    get_reviews_count_per_business, join_business_stars_and_reviews_count, get_worst_10_businesses, \
+    get_best_10_businesses, get_most_useful_reviews, parse_dates, get_first_year_of_elite, create_elite_since_df
 
 
 def main() -> None:
+    configurations = ArgsParser().parse_configurations()
+    configurator = Configurator(**configurations)
+    spark_manager = SparkManager(configurator.spark)
+    inputs = Inputs(**configurator.inputs)
+    outputs = Outputs(**configurator.outputs)
+    logger = Logger(configurator.logging).logger
     spark = spark_manager.start_spark(logger=logger)
 
+    # The following settings avoid errors and warnings due to legacy koalas version on the test server
+    # to use different dfs in the same statement
     ks.set_option('compute.ops_on_diff_frames', True)
+    # to solve 'WARN WindowExec: No Partition Defined for Window operation!'
     ks.options.compute.default_index_type = 'distributed-sequence'
 
     # ___ BUILD DFs ___
     business, user, review, full_review, tip, checkin = read_and_build_dataframes(
         logger=logger, spark=spark, inputs=inputs
     )
+
     # ___ TRANSFORM DFs ___
-    logger.info('Apply clean dates to checkin df')
-
-    last_checkins = checkin['date'] \
-        .map(clean_dates) \
-        .dt.floor('D', nonexistent='shift_backward') \
-        .dt.date
+    # checkin
     last_checkin = checkin.drop('date')
-    last_checkin['last_checkin'] = last_checkins
+    last_checkin['last_checkin'] = get_last_checkin_date(ser=checkin['date'], logger=logger)
 
-    # ___________________________________________
+    # review and user
+    elite_users = get_name_and_id_for_elite_users(kdf=user, logger=logger)
+    reviews_count = get_count_of_reviews_per_user(kdf=review, logger=logger)
+    elite_reviews = create_elite_reviews_df_sorted_by_count(
+        left=elite_users, right=reviews_count, logger=logger)
 
-    logger.info('Filter elite users')
-    elite_filter = user['elite'].str.len() > 0
-    elite_users = user.loc[elite_filter, ['name', 'user_id']]
+    # review
+    business_stars = get_average_stars_and_id_per_business(kdf=review, logger=logger)
+    count_per_business = get_reviews_count_per_business(kdf=review, logger=logger)
+    stars_and_count = join_business_stars_and_reviews_count(
+        left=business_stars, right=count_per_business, logger=logger)
+    worst10 = get_worst_10_businesses(kdf=stars_and_count, logger=logger)
+    best10 = get_best_10_businesses(kdf=stars_and_count, logger=logger)
+    most_useful_reviews = get_most_useful_reviews(kdf=review, logger=logger)
 
-    logger.info('Counting the reviews')
-    user_groups = review.groupby('user_id')
-    reviews_count = user_groups['review_id'] \
-        .count() \
-        .rename("number_of_reviews")
+    # tip
+    tip['date'] = parse_dates(ser=tip['date'], logger=logger)
 
-    logger.info('Join elite users with reviews count and sort by count')
-    elite_reviews = elite_users \
-        .join(reviews_count, on="user_id", how="left") \
-        .sort_values(by="number_of_reviews", ascending=False)
+    # user
+    first_year = get_first_year_of_elite(ser=user['elite'], logger=logger)
+    elite_since = create_elite_since_df(kdf=user, ser=first_year, logger=logger)
 
-    # ______________________________________________
-    business_groups = review.groupby('business_id')
-    logger.info('Calculate average business stars')
-    business_stars = business_groups['stars'].mean().rename('average_stars').reset_index()
-    # In order to compare businesses with the same average rating we may use the respective reviews counts
-    logger.info('Counting reviews count per business')
-    business_reviews_count = business_groups['review_id'].count().rename('reviews_count')
-    logger.info("Sorting...Sorting...Sorting...")
-    stars_and_count = business_stars.join(business_reviews_count, on="business_id")
-    # First we'll sort the reviews count descending
-    stars_and_count = stars_and_count.sort_values('reviews_count', ascending=False)
-
-    # For the worst 1 we get first 10 of the ascending sorted stars
-    worst10 = stars_and_count.sort_values('average_stars').head(10)
-    # We need to sort again this time descending in order to get first 10 for the best businesses
-    # We need to do this because pd.DataFrame.tail() is not implemented in the current koalas version ('1.0.1')
-    best10 = stars_and_count.sort_values('average_stars', ascending=False).head(10)
-    worst10 = worst10.drop('reviews_count')
-    best10 = best10.drop('reviews_count')
-
-    count_per_business = stars_and_count.drop('average_stars')
-
-    logger.info('Get useful reviews')
-    useful_reviews = user_groups['useful'].sum().rename('useful_reviews').reset_index()
-    most_useful_reviews = useful_reviews.sort_values('useful_reviews', ascending=False).head(10)
-
-    # ______________________________________________
-
-    tip['date'] = ks.to_datetime(tip['date'], infer_datetime_format=True).dt.floor('D', nonexistent='shift_backward')
-
-    # _____________________________________________
-    logger.info('Calculate elite users years')
-    today = datetime.now().year
-    first_year = ks.to_datetime(user['elite'].str.split(',').str.get(0), errors='coerce').dt.year
-    elite_since = ks.DataFrame(user['user_id'])
-    elite_since['years_since_elite'] = first_year.map(lambda x: today - x)
-
-    # _____________________________________________
-
+    # full review
     logger.info('Rename user extended columns')
     user_extended = user.drop('yelping_since').set_index('user_id')
     user_extended = user_extended.rename(columns={'name': 'user_name', 'elite': 'user_elite'})
@@ -137,9 +99,7 @@ def main() -> None:
                 logger=logger, outputs=outputs)
     # _______________________________________________
 
-    logger.info("SUCCESS!")
-    sleep(10)
-    logger.info('Exit application')
+    logger.info("SUCCESS!\n")
     spark.stop()
 
 

@@ -12,4 +12,5 @@ class SparkManager:
             .appName(self.app_name) \
             .master(self.master) \
             .getOrCreate()
+        spark.conf.set('spark.sql.execution.arrow.pyspark.enabled', "true")
         return spark
