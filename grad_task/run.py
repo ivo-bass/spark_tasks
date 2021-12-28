@@ -6,15 +6,9 @@ spark-submit run.py config.yml >> info.log
 
 """
 
-import databricks.koalas as ks
-
 from classes import ArgsParser, Configurator, SparkManager, Inputs, Outputs, Logger
 from functions import read_and_build_dataframes, write_files
-from functions.functions import split_string_and_get_last_date, get_name_and_id_for_elite_users, \
-    group_by__count__rename, create_elite_reviews_df_sorted_by_count, get_average_stars_and_id_per_business, \
-    get_reviews_count_per_business, join_business_stars_and_reviews_count, get_worst_10_businesses, \
-    get_best_10_businesses, get_most_useful_reviews, parse_dates, get_first_year_of_elite, create_elite_since_df, \
-    drop_and_rename_columns, set_index_and_rename_columns, concatenate_columns, join_left_with_2_dfs
+from functions.functions import *
 
 
 def main() -> None:
@@ -44,28 +38,37 @@ def main() -> None:
         ser=checkin['date'], logger=logger)
 
     # review and user
-    elite_users = get_name_and_id_for_elite_users(kdf=user, logger=logger)
+    elite_users = filter_empty_strings_and_get_columns(
+        kdf=user, filt_col='elite', columns=['name', 'user_id'], logger=logger)
     reviews_count = group_by__count__rename(
         kdf=review, grp_col='user_id', count_col='review_id', new_name='number_of_reviews', logger=logger)
-    elite_reviews = create_elite_reviews_df_sorted_by_count(
-        left=elite_users, right=reviews_count, logger=logger)
+    elite_reviews = join__sort_values(
+        left=elite_users, right=reviews_count, on='user_id', how='left',
+        sort_by="number_of_reviews", ascending=False, logger=logger)
 
     # review
-    business_stars = get_average_stars_and_id_per_business(
-        kdf=review, logger=logger)
-    count_per_business = get_reviews_count_per_business(
-        kdf=review, logger=logger)
-    stars_and_count = join_business_stars_and_reviews_count(
-        left=business_stars, right=count_per_business, logger=logger)
-    worst10 = get_worst_10_businesses(kdf=stars_and_count, logger=logger)
-    best10 = get_best_10_businesses(kdf=stars_and_count, logger=logger)
-    most_useful_reviews = get_most_useful_reviews(kdf=review, logger=logger)
+    business_stars = group_by__mean__rename__reset_index(
+        kdf=review, grp_col='business_id', mean_col='stars', new_name='average_stars', logger=logger)
+    count_per_business = group_by__count__rename(
+        kdf=review, grp_col='business_id', count_col='review_id', new_name='reviews_count', logger=logger)
+    stars_and_count = join_inner(
+        left=business_stars, right=count_per_business, on="business_id", logger=logger)
+    worst10 = sort__head__drop(
+        kdf=stars_and_count, sort_col='average_stars', ascending=True, n_head=10, drop_col='reviews_count',
+        logger=logger)
+    # We need to do this because pd.DataFrame.tail() is not implemented in the current koalas version ('1.0.1')
+    best10 = sort__head__drop(
+        kdf=stars_and_count, sort_col='average_stars', ascending=False, n_head=10, drop_col='reviews_count',
+        logger=logger)
+    most_useful_reviews = group_by__sum__rename__reset_index__sort__head(
+        kdf=review, grp_col='user_id', sum_col='useful', new_name='useful_reviews',
+        sort_col='useful_reviews', ascending=False, n_head=10, logger=logger)
 
     # tip
     tip['date'] = parse_dates(ser=tip['date'], logger=logger)
 
     # user
-    first_year = get_first_year_of_elite(ser=user['elite'], logger=logger)
+    first_year = split__get_first__to_datetime__year(ser=user['elite'], logger=logger)
     elite_since = create_elite_since_df(
         kdf=user, ser=first_year, logger=logger)
 
