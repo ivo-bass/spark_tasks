@@ -6,16 +6,11 @@ sys.path.insert(0, os.path.abspath('..'))
 from grad_task.classes import CsvWriter, ParquetWriter
 
 
-def write_files(last_checkin, elite_reviews, worst10, best10,
-                count_per_business, most_useful_reviews, tip, elite_since, full_review,
+def write_files(elite_reviews, worst10, best10,
+                count_per_business, most_useful_reviews, elite_since, full_review,
                 logger, outputs):
     csv_writer = CsvWriter(logger=logger)
     parquet_writer = ParquetWriter(logger=logger)
-    parquet_writer.write(
-        kdf=last_checkin,
-        path=outputs.checkin,
-        partition_cols=last_checkin['last_checkin'].dt.year
-    )
     csv_writer.write(
         kdf=elite_reviews,
         path=outputs.review_text_elite_reviews
@@ -35,11 +30,6 @@ def write_files(last_checkin, elite_reviews, worst10, best10,
     csv_writer.write(
         kdf=most_useful_reviews,
         path=outputs.review_text_most_useful
-    )
-    parquet_writer.write(
-        kdf=tip,
-        path=outputs.tip,
-        partition_cols=tip['date'].dt.year
     )
     csv_writer.write(
         kdf=elite_since,

@@ -1,8 +1,7 @@
 """
-cd script dir and
 run script with:
 
-spark-submit run.py config.yml >> info.log
+spark-submit --driver-memory 6g run.py config.yml >> info.log
 
 """
 
@@ -26,16 +25,32 @@ def main() -> None:
     # to solve 'WARN WindowExec: No Partition Defined for Window operation!'
     ks.options.compute.default_index_type = 'distributed-sequence'
 
+    # read, cache, transform, write and uncache the dfs which has no contribution to the other dfs
+    # tip
+    tip_sdf = spark.read.json(path=inputs.tip)
+    sdf_columns = tip_sdf.select('user_id', 'business_id', 'text', 'date')
+    tip_uncached = ks.DataFrame(data=sdf_columns)
+    with tip_uncached.spark.cache() as tip:
+        tip['date'] = parse_dates(ser=tip['date'], logger=logger)
+        tip.to_parquet(path=outputs.tip, partition_cols=tip['date'].dt.year)
+
+    # checkin
+    checkin_uncached = ks.read_json(path=inputs.checkin)
+    with checkin_uncached.spark.cache() as checkin:
+        checkin['last_checkin'] = split_string_and_get_last_date(
+            ser=checkin['date'], logger=logger)
+        checkin = checkin.drop('date')
+        checkin.to_parquet(path=outputs.checkin, partition_cols=checkin['last_checkin'].dt.year)
+
     # ___ BUILD DFs ___
-    business, user, review, full_review, tip, checkin = read_and_build_dataframes(
+    business, user, review, full_review = read_and_build_dataframes(
         logger=logger, spark=spark, inputs=inputs
     )
+    business = business.spark.cache()
+    user = user.spark.cache()
+    review = review.spark.cache()
 
     # ___ TRANSFORM DFs ___
-    # checkin
-    last_checkin = checkin.drop('date')
-    last_checkin['last_checkin'] = split_string_and_get_last_date(
-        ser=checkin['date'], logger=logger)
 
     # review and user
     elite_users = filter_empty_strings_and_get_columns(
@@ -64,11 +79,9 @@ def main() -> None:
         kdf=review, grp_col='user_id', sum_col='useful', new_name='useful_reviews',
         sort_col='useful_reviews', ascending=False, n_head=10, logger=logger)
 
-    # tip
-    tip['date'] = parse_dates(ser=tip['date'], logger=logger)
-
     # user
-    first_year = split__get_first__to_datetime__year(ser=user['elite'], logger=logger)
+    first_year = split__get_first__to_datetime__year(
+        ser=user['elite'], logger=logger)
     elite_since = create_elite_since_df(
         kdf=user, ser=first_year, logger=logger)
 
@@ -93,8 +106,8 @@ def main() -> None:
         right2=business_extended, on2='business_id', logger=logger)
 
     # ___ WRITE DFs ___
-    write_files(last_checkin, elite_reviews, worst10, best10, count_per_business,
-                most_useful_reviews, tip, elite_since, full_review,
+    write_files(elite_reviews, worst10, best10, count_per_business,
+                most_useful_reviews, elite_since, full_review,
                 logger=logger, outputs=outputs)
 
     logger.info("SUCCESS!\n")

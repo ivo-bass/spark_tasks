@@ -30,10 +30,4 @@ def read_and_build_dataframes(logger, spark, inputs):
         sdf=review_sdf,
         columns=['business_id', 'user_id', 'stars', 'useful', 'text', 'date']
     )
-    tip = builder.build(
-        path=inputs.tip,
-        reader=json_to_spark_reader,
-        columns=['user_id', 'business_id', 'text', 'date']
-    )
-    checkin = JsonToKoalasReader(logger=logger).read(path=inputs.checkin)
-    return business, user, review, full_review, tip, checkin
+    return business, user, review, full_review
