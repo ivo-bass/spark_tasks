@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 
 
 class BaseReader(ABC):
+    """Abstract class for reading datasets"""
+
     def __init__(self, logger) -> None:
         self.logger = logger
 

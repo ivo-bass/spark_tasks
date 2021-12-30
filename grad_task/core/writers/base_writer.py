@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 
 
 class BaseWriter(ABC):
+    """Abstract class for writing DataFrames"""
     def __init__(self, logger) -> None:
         self.logger = logger
 
